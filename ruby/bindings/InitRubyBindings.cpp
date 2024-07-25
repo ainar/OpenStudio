@@ -19,7 +19,7 @@
 // <conan_fmt>/include/fmt/core.h:405:7: error: expected unqualified-id
 // using int128_t = __int128_t;
 //       ^
-// <conan_openstudio_ruby>include/ruby-2.7.0/arm64-darwin21/ruby/config.h:202:18: note: expanded from macro 'int128_t'
+// <conan_openstudio_ruby>include/ruby-3.2.0/arm64-darwin21/ruby/config.h:202:18: note: expanded from macro 'int128_t'
 // #define int128_t __int128
 
 // #include <ranges>
@@ -446,6 +446,10 @@ end # module OpenStudio
 
 void initEmbeddedGems() {
 
+  // Note: We instantiate a global $logger here
+  // It used to be a ruby Logger (require 'logger'), and we would have needed to set the log level based on the CLI parameters passed
+  // Instead, I mimic it by providing a convenience class that forwards to the OpenStudio logger, which takes care of the log level
+
   std::string initScript = R"ruby(
 # This is the save puts to use to catch EPIPE. Uses `puts` on the given IO object and safely ignores any Errno::EPIPE
 #
@@ -467,15 +471,57 @@ def safe_puts(message=nil, opts=nil)
   end
 end
 
-require 'logger'
+require 'stringio' # TODO: remove this once json-schema version is > 3.4.0, (cf https://github.com/voxpupuli/json-schema/pull/512)
 require 'rbconfig'
 
-$logger = Logger.new(STDOUT)
-#$logger.level = Logger::ERROR
-$logger.level = Logger::WARN
+# require 'logger'
+# $logger = Logger.new(STDOUT)
+# $logger.level = Logger::DEBUG #WARN
+# Mimic ruby Logger, but forward to OpenStudio, so we don't have to worry about setting the LogLevel
+class ConvenienceLogger
+
+  attr_accessor :level
+
+  def initialize(log_level)
+    @level = log_level
+  end
+
+  def trace?
+    @level <= OpenStudio::Trace
+  end
+
+  def trace(msg)
+    OpenStudio::logFree(OpenStudio::Trace, "ruby", msg)
+  end
+
+  def debug(msg)
+    OpenStudio::logFree(OpenStudio::Debug, "ruby", msg)
+  end
+
+  def info(msg)
+    OpenStudio::logFree(OpenStudio::Info, "ruby", msg)
+  end
+
+  def warn(msg)
+    OpenStudio::logFree(OpenStudio::Warn, "ruby", msg)
+  end
+
+  def error(msg)
+    OpenStudio::logFree(OpenStudio::Error, "ruby", msg)
+  end
+
+  def fatal(msg)
+    OpenStudio::logFree(OpenStudio::Fatal, "ruby", msg)
+  end
+
+end
+$logger = ConvenienceLogger.new(OpenStudio::Logger.instance.standardOutLogger.logLevel.get)
 
 # debug Gem::Resolver, must go before resolver is required
-#ENV['DEBUG_RESOLVER'] = "1"
+if $logger.trace?
+  ENV['DEBUG_RESOLVER'] = "1"
+end
+
 original_arch = nil
 if RbConfig::CONFIG['arch'] =~ /x64-mswin64/
   # assume that system ruby of 'x64-mingw32' architecture was used to create bundle
@@ -491,137 +537,110 @@ Gem::Platform.local
 if original_arch
   RbConfig::CONFIG['arch'] = original_arch
 end
+  )ruby";
 
-module Gem
-class Specification < BasicSpecification
+  openstudio::evalString(initScript);
 
-  # This isn't ideal but there really is no available method to add specs for our use case.
-  # Using self.dirs=() works for ruby official gems but since it appends the dir paths with 'specifications' it breaks for bundled gem specs
-  def self.add_spec spec
-    warn "Gem::Specification.add_spec is deprecated and will be removed in RubyGems 3.0" unless Gem::Deprecate.skip
-    # TODO: find all extraneous adds
-    # puts
-    # p :add_spec => [spec.full_name, caller.reject { |s| s =~ /minitest/ }]
+  const std::string irbPatch = R"ruby(if $logger.trace?
+require 'irb'
+require 'irb/lc/error'
 
-    # TODO: flush the rest of the crap from the tests
-    # raise "no dupes #{spec.full_name} in #{all_names.inspect}" if
-    #   _all.include? spec
+# ENV["IRB_LANG"] = "C"
+# puts "Reline encoding_system_needs: #{Reline.encoding_system_needs.name}"
+# puts "Reline::IOGate.encoding: #{Reline::IOGate.encoding}"
 
-    raise "nil spec!" unless spec # TODO: remove once we're happy with tests
+# Workaround issue in line_editor.rb where it fails to read a full block
+# unicode character. Probably because of the way we embbed it in C++
+# The full block is \xe2\x96\x88
+ENV['RELINE_ALT_SCROLLBAR'] = "1"
 
-    return if _all.include? spec
-
-    _all << spec
-    stubs << spec
-    (@@stubs_by_name[spec.name] ||= []) << spec
-    sort_by!(@@stubs_by_name[spec.name]) { |s| s.version }
-    _resort!(_all)
-    _resort!(stubs)
-  end
-
-  def gem_dir
-    embedded = false
-    tmp_loaded_from = loaded_from.clone
-    if tmp_loaded_from.chars.first == ':'
-      tmp_loaded_from[0] = ''
-      embedded = true
+class Reline::LineEditor
+  def reset(prompt = '', encoding:)
+    @rest_height = (Reline::IOGate.get_screen_size.first - 1) - Reline::IOGate.cursor_pos.y
+    @screen_size = Reline::IOGate.get_screen_size
+    @screen_height = @screen_size.first
+    reset_variables(prompt, encoding: encoding)
+    Reline::IOGate.set_winch_handler do
+      @resized = true
     end
-
-    joined = File.join(gems_dir, full_name)
-    if embedded
-      test = /bundler\/gems/.match(tmp_loaded_from)
-      if test
-        @gem_dir = ':' + (File.dirname tmp_loaded_from)
-      else
-        @gem_dir = joined
-      end
+    if ENV.key?('RELINE_ALT_SCROLLBAR')
+      @full_block = '::'
+      @upper_half_block = "''"
+      @lower_half_block = '..'
+      @block_elem_width = 2
+    elsif Reline::IOGate.win?
+      @full_block = '█'
+      @upper_half_block = '▀'
+      @lower_half_block = '▄'
+      @block_elem_width = 1
+    elsif @encoding == Encoding::UTF_8
+      @full_block = '█'
+      @upper_half_block = '▀'
+      @lower_half_block = '▄'
+      @block_elem_width = Reline::Unicode.calculate_width('█')
     else
-      @gem_dir = File.expand_path joined
+      @full_block = '::'
+      @upper_half_block = "''"
+      @lower_half_block = '..'
+      @block_elem_width = 2
     end
   end
-
-  def full_gem_path
-    # TODO: This is a heavily used method by gems, so we'll need
-    # to aleast just alias it to #gem_dir rather than remove it.
-    embedded = false
-    tmp_loaded_from = loaded_from.clone
-    if tmp_loaded_from.chars.first == ':'
-      tmp_loaded_from[0] = ''
-      embedded = true
-    end
-
-    joined = File.join(gems_dir, full_name)
-    if embedded
-      test = /bundler\/gems/.match(tmp_loaded_from)
-      if test
-        @full_gem_path = ':' + (File.dirname tmp_loaded_from)
-        @full_gem_path.untaint
-        return @full_gem_path
-      else
-        @full_gem_path = joined
-        @full_gem_path.untaint
-        return @full_gem_path
-      end
-    else
-      @full_gem_path = File.expand_path joined
-      @full_gem_path.untaint
-    end
-    return @full_gem_path if File.directory? @full_gem_path
-
-    @full_gem_path = File.expand_path File.join(gems_dir, original_name)
-  end
-
-  def gems_dir
-    # TODO: this logic seems terribly broken, but tests fail if just base_dir
-    @gems_dir = File.join(loaded_from && base_dir || Gem.dir, "gems")
-  end
-
-  def base_dir
-    return Gem.dir unless loaded_from
-
-    embedded = false
-    tmp_loaded_from = loaded_from.clone
-    if tmp_loaded_from.chars.first == ':'
-      tmp_loaded_from[0] = ''
-      embedded = true
-    end
-
-    test = /bundler\/gems/.match(tmp_loaded_from)
-    result = if (default_gem? || test) then
-        File.dirname File.dirname File.dirname tmp_loaded_from
-      else
-        File.dirname File.dirname tmp_loaded_from
-      end
-
-    if embedded
-      result = ':' + result
-    end
-    @base_dir = result
-  end
-
-end
 end
 
-# have to do some forward declaration and pre-require to get around autoload cycles
-#module Bundler
-#end
-
-# This is the code chunk to allow for an embedded IRB shell. From Jason Roelofs, found on StackOverflow
 module IRB # :nodoc:
+  class Locale
+
+    alias :original_load :load
+    alias :original_require :require
+
+    def require(file, priv = nil)
+      # puts "require: #{file}"
+      original_require(file, priv)
+    end
+
+    # Some shenanigans being done to detect localized files, and that relies ton File.readable? and co...
+    def load(file, priv=nil)
+      # puts "file=#{file}"
+      if file == 'irb/error.rb'
+        $".push file
+        @@loaded << 'irb/lc/error.rb'
+        return
+      end
+      original_load(file, priv)
+    end
+
+  end
+
+
   def self.start_session(binding)
     unless @__initialized
       args = ARGV
       ARGV.replace(ARGV.dup)
       IRB.setup(nil)
+      # locale = @CONF[:LC_MESSAGES]
+      # p locale
+
       ARGV.replace(args)
       @__initialized = true
     end
 
-    workspace = WorkSpace.new(binding)
-
-    irb = Irb.new(workspace)
-
     @CONF[:IRB_RC].call(irb.context) if @CONF[:IRB_RC]
+    # puts @CONF[:PROMPT_MODE]
+    os_version = "3.8.0" # OpenStudio::openStudioVersion
+    @CONF[:PROMPT][:OPENSTUDIO] = {
+      :PROMPT_I=>"(os #{os_version}) :%03n > ",
+      :PROMPT_S=>"(os #{os_version}) :%03n%l> ",
+      :PROMPT_C=>"(os #{os_version}) :%03n > ",
+      :PROMPT_N=>"(os #{os_version}) :%03n?> ",
+      :RETURN=>" => %s \n",
+      :AUTO_INDENT=>true
+    }
+    @CONF[:PROMPT_MODE] = :OPENSTUDIO
+    workspace = WorkSpace.new(binding)
+    input_method = IRB::RelineInputMethod.new
+    irb = Irb.new(workspace, input_method)
+
+
     @CONF[:MAIN_CONTEXT] = irb.context
 
     catch(:IRB_EXIT) do
@@ -629,20 +648,16 @@ module IRB # :nodoc:
     end
   end
 end
-  )ruby";
+end)ruby";
 
-  openstudio::evalString(initScript);
+  openstudio::evalString(irbPatch);
 }
 
 void setupEmbeddedGemsClearEnvVars() {
 
   // in hash.c there's lot of env-related functions, but all private, aside from rb_env_clear();
   const std::string clearEnvs = R"ruby(
-ENV.delete('GEM_HOME') if ENV['GEM_HOME']
-ENV.delete('GEM_PATH') if ENV['GEM_PATH']
-ENV.delete('BUNDLE_GEMFILE') if ENV['BUNDLE_GEMFILE']
-ENV.delete('BUNDLE_PATH') if ENV['BUNDLE_PATH']
-ENV.delete('BUNDLE_WITHOUT') if ENV['BUNDLE_WITHOUT']
+ENV.reject! { |k, _| ['GEM', 'BUNDLE'].any? { |x| k.start_with?(x) } }
   )ruby";
 
   openstudio::evalString(clearEnvs);
@@ -707,11 +722,29 @@ void setGemPathDir(const std::vector<openstudio::path>& gemPathDirs) {
 }
 
 void locateEmbeddedGems(bool use_bundler) {
+  // It is important to find, eval, and call add_spec for all of the gemspecs
+  // that are in the embedded file system. The rubgems find/load mechanims will
+  // attempt to use a number of Ruby file, directory, and path operations that
+  // are not compaitable with the embdded file system. By doing the find, eval,
+  // add_spec routine up front, rubygems will avoid trying to load things off of
+  // the embedded file system itself.
+  //
+  // A previous version of this routine added embedded file paths to the gem
+  // path, such as Gem.paths.path << ':/ruby/3.2.0/gems/'. This is not
+  // sustainable because it requires shims for many of the Ruby file operations
+  // so that they work with embedded files. The solution here avoids File
+  // operations on embdded file system with the exception of our own
+  // EmbeddedScripting::getFileAsString
 
   std::string initCmd = R"ruby(
 
-  Gem.paths.path << ':/ruby/2.7.0/gems/'
-  Gem.paths.path << ':/ruby/2.7.0/bundler/gems/'
+  # This prevents default system paths from creeping in
+  class Gem::PathSupport
+    def default_path
+      return []
+    end
+  end
+
   Gem::Deprecate.skip = true
 
   # find all the embedded gems
@@ -723,6 +756,15 @@ void locateEmbeddedGems(bool use_bundler) {
         begin
           spec = EmbeddedScripting::getFileAsString(f)
           s = eval(spec)
+
+          # These require io-console, which we don't have on Windows
+          if Gem.win_platform?
+              next if s.name == 'reline'
+              next if s.name == 'debug'
+              next if s.name == 'irb'
+              next if s.name == 'readline'
+          end
+
           s.loaded_from = f
           # This is shenanigans because otherwise rubygems will think extensions are missing
           # But we are initing them manually so they are not missing
@@ -782,7 +824,7 @@ void locateEmbeddedGems(bool use_bundler) {
       if original_embedded_gems[spec.name]
         # check if gem can be loaded from RUBYLIB, this supports developer use case
         original_load_path.each do |lp|
-          if File.exists?(File.join(lp, spec.name)) || File.exists?(File.join(lp, spec.name + '.rb')) || File.exists?(File.join(lp, spec.name + '.so'))
+          if File.exist?(File.join(lp, spec.name)) || File.exist?(File.join(lp, spec.name + '.rb')) || File.exist?(File.join(lp, spec.name + '.so'))
             $logger.debug "Found #{spec.name} in '#{lp}', overrides gem #{spec.spec_file}"
             do_activate = false
             break
@@ -806,32 +848,37 @@ void locateEmbeddedGems(bool use_bundler) {
   if (use_bundler) {
     initCmd += R"ruby(
   # Load the bundle before activating any embedded gems
-  if true # use_bundler
+  embedded_gems_to_activate.each do |spec|
+    if spec.name == "bundler"
+      $logger.debug "Activating Bundler gem #{spec.spec_file}"
+      # if $logger.trace?
+      #   pp spec
+      # end
 
-    embedded_gems_to_activate.each do |spec|
-      if spec.name == "bundler"
-        $logger.debug "Activating gem #{spec.spec_file}"
-        begin
-          # Activate will manipulate the $LOAD_PATH to include the gem
-          spec.activate
-        rescue Gem::LoadError
-          # There may be conflicts between the bundle and the embedded gems,
-          # those will be logged here
-          $logger.error "Error activating gem #{spec.spec_file}"
-          activation_errors = true
-        end
+      begin
+        # Activate will manipulate the $LOAD_PATH to include the gem
+        spec.activate
+      rescue Gem::LoadError => e
+        # There may be conflicts between the bundle and the embedded gems,
+        # those will be logged here
+        exception_msg = "Error activating gem #{spec.spec_file}: #{e.class}: #{e.message}\nTraceback:\n"
+        exception_msg += e.backtrace.join("\n")
+        STDERR.puts exception_msg
+        $logger.error "Error activating gem #{spec.spec_file}"
+        activation_errors = true
       end
     end
+  end
 
-    current_dir = Dir.pwd
+  current_dir = Dir.pwd
 
-    original_arch = nil
-    if RbConfig::CONFIG['arch'] =~ /x64-mswin64/
-      # assume that system ruby of 'x64-mingw32' architecture was used to create bundle
-      original_arch = RbConfig::CONFIG['arch']
-      $logger.info "Temporarily replacing arch '#{original_arch}' with 'x64-mingw32' for Bundle"
-      RbConfig::CONFIG['arch'] = 'x64-mingw32'
-    end
+  original_arch = nil
+  if RbConfig::CONFIG['arch'] =~ /x64-mswin64/
+    # assume that system ruby of 'x64-mingw32' architecture was used to create bundle
+    original_arch = RbConfig::CONFIG['arch']
+    $logger.info "Temporarily replacing arch '#{original_arch}' with 'x64-mingw32' for Bundle"
+    RbConfig::CONFIG['arch'] = 'x64-mingw32'
+  end
 
     # require bundler
     # have to do some forward declaration and pre-require to get around autoload cycles
@@ -840,6 +887,27 @@ void locateEmbeddedGems(bool use_bundler) {
     require 'bundler/plugin'
     #require 'bundler/rubygems_ext'
     require 'bundler/rubygems_integration'
+
+    # Global list, to be populated below
+    $ignore_native_gem_names = []
+
+    module Bundler
+      class RubygemsIntegration
+
+        alias :ori_spec_missing_extensions? :spec_missing_extensions?
+
+        def spec_missing_extensions?(spec, default = true)
+
+          # This avoids getting an annoying message for no reason
+          if $ignore_native_gem_names.any? {|name| name == spec.name }
+            return false
+          end
+
+          return ori_spec_missing_extensions?(spec, default)
+        end
+      end
+    end
+
     require 'bundler/version'
     require 'bundler/ruby_version'
     #require 'bundler/constants'
@@ -850,47 +918,93 @@ void locateEmbeddedGems(bool use_bundler) {
     require 'bundler/definition'
     require 'bundler/dsl'
     require 'bundler/uri_credentials_filter'
+    require 'bundler/uri_normalizer'
+    require 'bundler/index'
+    require 'bundler/digest'
+    require 'bundler/source/git'
+    require 'bundler/source/git/git_proxy'
+    require 'bundler/match_remote_metadata'
+    require 'bundler/remote_specification'
+    require 'bundler/stub_specification'
     require 'bundler'
 
-    begin
-      # activate bundled gems
-      # bundler will look in:
-      # 1) ENV["BUNDLE_GEMFILE"]
-      # 2) find_file("Gemfile", "gems.rb")
-      #require 'bundler/setup'
+  begin
+    # activate bundled gems
+    # bundler will look in:
+    # 1) ENV["BUNDLE_GEMFILE"]
+    # 2) find_file("Gemfile", "gems.rb")
+    #require 'bundler/setup'
 
-      groups = Bundler.definition.groups
-      keep_groups = []
-      without_groups = ENV['BUNDLE_WITHOUT']
-      $logger.info "without_groups = #{without_groups}"
-      groups.each do |g|
-        $logger.info "g = #{g}"
-        if without_groups.include?(g.to_s)
-          $logger.info "Bundling without group '#{g}'"
-        else
-          keep_groups << g
+    if $logger.trace?
+      Bundler.ui.level = "debug"
+    end
+
+    groups = Bundler.definition.groups
+    keep_groups = []
+    without_groups = ENV['BUNDLE_WITHOUT']
+    $logger.info "without_groups = #{without_groups}"
+    groups.each do |g|
+      $logger.info "g = #{g}"
+      if without_groups.include?(g.to_s)
+        $logger.info "Bundling without group '#{g}'"
+      else
+        keep_groups << g
+      end
+    end
+
+    $logger.info "Bundling with groups [#{keep_groups.join(',')}]"
+
+    # Filter out dependencies with native extensions that we already have embedded in the CLI and that satisfy the requirements
+    locked_specs = Bundler.definition.instance_variable_get(:@locked_specs)
+
+    embedded_gems_to_activate.each do |spec|
+      next if spec.extensions.empty?
+
+      next unless locked_specs.any? {|locked_spec| locked_spec.name == spec.name}
+
+      dep_to_requirements = {}
+      locked_specs.each do |locked_spec|
+        deleted_deps = locked_spec.dependencies.select { |dep| dep.name == spec.name && dep.requirement.satisfied_by?(spec.version) }
+        locked_spec.dependencies.reject! { |dep| dep.name == spec.name && dep.requirement.satisfied_by?(spec.version) }
+        deleted_deps&.each do |dep|
+          dep_to_requirements[locked_spec.name] = dep.requirement.to_s
         end
       end
 
-      $logger.info "Bundling with groups [#{keep_groups.join(',')}]"
 
-      remaining_specs = []
-      Bundler.definition.specs_for(keep_groups).each {|s| remaining_specs << s.name}
-
-      $logger.info "Specs to be included [#{remaining_specs.join(',')}]"
-
-
-      Bundler.setup(*keep_groups)
-    ensure
-
-      if original_arch
-        $logger.info "Restoring arch '#{original_arch}'"
-        RbConfig::CONFIG['arch'] = original_arch
+      if locked_specs.none? { |locked_spec| locked_spec.dependencies.any? {|x| x.name == spec.name} }
+        locked_spec_v = locked_specs.select{|locked_spec| locked_spec.name == spec.name}.first.version
+        $logger.debug("Removing native gem #{spec.name} from Bundler locked_specs (version #{locked_spec_v}), using the embedded dependency (CLI one has version #{spec.version})")
+        $logger.trace("Gems having #{spec.name} as a dependency: #{dep_to_requirements}")
+        raise "Failed to activate #{spec.name}" unless spec.activate
+        $ignore_native_gem_names << spec.name
+        locked_specs.delete_by_name(spec.name)
       end
-
-      Dir.chdir(current_dir)
     end
-  end)ruby";
+
+    # I am pretty sure sure we don't need this. Because internally Bundler.definition.filter_specs will ignore it from the dependencies if it's there as well
+    # Bundler.definition.instance_variable_set(:@dependencies,  Bundler.definition.dependencies.select { |dep| $ignore_native_gem_names.include?(dep.name) } )
+
+    remaining_specs = []
+    Bundler.definition.specs_for(keep_groups).each {|s| remaining_specs << s.name}
+
+    $logger.info "Specs to be included [#{remaining_specs.join(',')}]"
+
+
+    Bundler.setup(*keep_groups)
+  ensure
+
+    if original_arch
+      $logger.info "Restoring arch '#{original_arch}'"
+      RbConfig::CONFIG['arch'] = original_arch
+    end
+
+    Dir.chdir(current_dir)
+
+    # clean up the global
+    $ignore_native_gem_names = nil
+  end
+  )ruby";
   }
 
   initCmd += R"ruby(
@@ -926,8 +1040,8 @@ void setupEmbeddedGems(const std::vector<openstudio::path>& includeDirs, const s
                        const openstudio::path& gemHomeDir, const openstudio::path& bundleGemFilePath, const openstudio::path& bundleGemDirPath,
                        const std::string& bundleWithoutGroups) {
 
-  initEmbeddedGems();
   setupEmbeddedGemsClearEnvVars();
+  initEmbeddedGems();
 
   addIncludeDirsToLoadPaths(includeDirs);
   setGemPathDir(gemPathDirs);
@@ -941,7 +1055,7 @@ void setupEmbeddedGems(const std::vector<openstudio::path>& includeDirs, const s
     setRubyEnvVarPath("BUNDLE_PATH", bundleGemDirPath);
   } else if (use_bundler) {
     // bundle was requested but bundle_path was not provided
-    std::cout << "Warn: Bundle activated but ENV['BUNDLE_PATH'] is not set" << '\n' << "Info: Setting BUNDLE_PATH to ':/ruby/2.7.0/'" << std::endl;
+    std::cout << "Warn: Bundle activated but ENV['BUNDLE_PATH'] is not set" << '\n' << "Info: Setting BUNDLE_PATH to ':/ruby/3.2.0/'" << std::endl;
   }
 
   if (!bundleWithoutGroups.empty()) {

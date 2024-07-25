@@ -25,9 +25,15 @@ class RubyEngineFixture : public testing::Test
   }
 
   static std::string stripAddressFromErrorMessage(const std::string& error_message) {
-    static std::regex object_address_re("0x[[:alnum:]]*>");
+    static std::regex object_address_re("0x[[:alnum:]]* @__swigtype__=\"_p_openstudio__model__Model\">");
 
     return std::regex_replace(error_message, object_address_re, "ADDRESS>");
+  }
+
+  static std::string stripNumLevels(const std::string& error_message) {
+    static std::regex num_levels_re("[[:alnum:]]+ levels");
+
+    return std::regex_replace(error_message, num_levels_re, "<NUM_LEVELS> levels");
   }
 
  protected:
@@ -40,6 +46,7 @@ class RubyEngineFixture : public testing::Test
     (*thisEngine)->registerType<openstudio::measure::ModelMeasure*>("openstudio::measure::ModelMeasure *");
     (*thisEngine)->exec("OpenStudio::init_rest_of_openstudio()");
   }
+
   // tear down after each test
   virtual void TearDown() override {
     // Want to ensure the engine is reset regardless of the test outcome, or it may throw a segfault
@@ -50,10 +57,13 @@ class RubyEngineFixture : public testing::Test
 };
 
 TEST_F(RubyEngineFixture, BadMeasure) {
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  const std::string classAndDirName = "BadMeasure";
+  ASSERT_DEATH(
+    {
+      const std::string classAndDirName = "BadMeasure";
 
-  const auto scriptPath = getScriptPath(classAndDirName);
+      const auto scriptPath = getScriptPath(classAndDirName);
   auto measureScriptObject = (*thisEngine)->loadMeasure(scriptPath, classAndDirName);
   auto* measurePtr = (*thisEngine)->getAs<openstudio::measure::ModelMeasure*>(measureScriptObject);
 
@@ -64,23 +74,31 @@ TEST_F(RubyEngineFixture, BadMeasure) {
 Traceback (most recent call last):
 {0}:12:in `another_method'
 {0}:16:in `arguments')",
-                                               scriptPath.generic_string());
+                                                   scriptPath.generic_string());
 
-  openstudio::model::Model model;
-  try {
-    measurePtr->arguments(model);
-    ASSERT_FALSE(true) << "Expected measure arguments(model) to throw";
-  } catch (std::exception& e) {
-    std::string error = e.what();
-    EXPECT_EQ(expected_exception, error);
-  }
+      openstudio::model::Model model;
+
+      try {
+        measurePtr->arguments(model);
+        ASSERT_FALSE(true) << "Expected measure arguments(model) to throw";
+      } catch (std::exception& e) {
+        std::string error = e.what();
+        EXPECT_EQ(expected_exception, error);
+      }
+
+      thisEngine->reset();
+    },
+    "oops");
 }
 
 TEST_F(RubyEngineFixture, WrongMethodMeasure) {
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  const std::string classAndDirName = "WrongMethodMeasure";
+  ASSERT_DEATH(
+    {
+      const std::string classAndDirName = "WrongMethodMeasure";
 
-  const auto scriptPath = getScriptPath(classAndDirName);
+      const auto scriptPath = getScriptPath(classAndDirName);
   auto measureScriptObject = (*thisEngine)->loadMeasure(scriptPath, classAndDirName);
   auto* measurePtr = (*thisEngine)->getAs<openstudio::measure::ModelMeasure*>(measureScriptObject);
 
@@ -98,16 +116,24 @@ Traceback (most recent call last):
     measurePtr->arguments(model);
     ASSERT_FALSE(true) << "Expected measure arguments(model) to throw";
   } catch (std::exception& e) {
-    std::string error = e.what();
-    EXPECT_EQ(expected_exception, stripAddressFromErrorMessage(error));
-  }
+        std::string error = e.what();
+        EXPECT_EQ(expected_exception, stripAddressFromErrorMessage(error));
+      }
+
+      thisEngine->reset();
+    },
+    "undefined method `nonExistingMethod'");
 }
 
 TEST_F(RubyEngineFixture, StackLevelTooDeepMeasure) {
 
-  const std::string classAndDirName = "StackLevelTooDeepMeasure";
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  const auto scriptPath = getScriptPath(classAndDirName);
+  ASSERT_DEATH(
+    {
+      const std::string classAndDirName = "StackLevelTooDeepMeasure";
+
+      const auto scriptPath = getScriptPath(classAndDirName);
   auto measureScriptObject = (*thisEngine)->loadMeasure(scriptPath, classAndDirName);
   auto* measurePtr = (*thisEngine)->getAs<openstudio::measure::ModelMeasure*>(measureScriptObject);
 
@@ -123,7 +149,7 @@ Traceback (most recent call last):
 {0}:12:in `s'
 {0}:12:in `s'
 {0}:12:in `s'
-	... 10061 levels...
+	... <NUM_LEVELS> levels...
 {0}:12:in `s'
 {0}:12:in `s'
 {0}:12:in `s'
@@ -143,8 +169,11 @@ Traceback (most recent call last):
     measurePtr->arguments(model);
     ASSERT_FALSE(true) << "Expected measure arguments(model) to throw";
   } catch (std::exception& e) {
-    std::string error = e.what();
-    EXPECT_EQ(expected_exception, stripAddressFromErrorMessage(error));
-  }
+        std::string error = e.what();
+        EXPECT_EQ(expected_exception, stripNumLevels(error));
+      }
+      thisEngine->reset();
+    },
+    "stack level too deep");
 }
 

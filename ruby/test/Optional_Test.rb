@@ -7,7 +7,7 @@ require 'openstudio'
 
 require 'minitest/autorun'
 
-class Optional_Test < MiniTest::Unit::TestCase
+class Optional_Test < Minitest::Test
 
   # def setup
   # end
@@ -36,6 +36,10 @@ class Optional_Test < MiniTest::Unit::TestCase
     else
       assert(true)
     end
+    assert(optional.value_or(20.0).is_a?(Float))
+    assert_equal(20.0, optional.value_or(20.0))
+    assert(optional.value_or(20).is_a?(Float))
+    assert_equal(20.0, optional.value_or(20))
 
     # would like to use this syntax to test if set
     optional = OpenStudio::OptionalDouble.new
@@ -51,12 +55,10 @@ class Optional_Test < MiniTest::Unit::TestCase
     optional.set(10.0)
     assert(optional.is_initialized)
     assert_equal(10.0, optional.get)
-
-
-
+    assert(optional.value_or(20.0).is_a?(Float))
+    assert_equal(10.0, optional.value_or(20.0))
+    assert(optional.value_or(20).is_a?(Float))
+    assert_equal(10.0, optional.value_or(20))
   end
 
-
 end
-
-

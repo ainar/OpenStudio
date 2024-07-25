@@ -1,15 +1,21 @@
 """Insert your copyright here."""
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import openstudio
 import pytest
 
-from measure import ReportingMeasureName
-
 CURRENT_DIR_PATH = Path(__file__).parent.absolute()
+sys.path.insert(0, str(CURRENT_DIR_PATH.parent))
+from measure import ReportingMeasureName
+sys.path.pop(0)
+del sys.modules['measure']
+
+
 MODEL_IN_PATH_DEFAULT = CURRENT_DIR_PATH / "example_model.osm"
 EPW_IN_PATH_DEFAULT = CURRENT_DIR_PATH / "USA_CO_Golden-NREL.724666_TMY3.epw"
 
@@ -41,7 +47,9 @@ class TestReportingMeasureName:
         epw_path: Path = EPW_IN_PATH_DEFAULT,
     ):
         run_dir = TestReportingMeasureName.run_dir(test_name)
-        run_dir.mkdir(parents=True, exist_ok=True)
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True)
 
         report_path = TestReportingMeasureName.report_path(test_name)
         if report_path.exists():
@@ -60,7 +68,7 @@ class TestReportingMeasureName:
         request_model = rt.translateWorkspace(workspace)
 
         translator = openstudio.osversion.VersionTranslator()
-        model = translator.loadModel(openstudio.toPath(str(model_in_path)))
+        model = translator.loadModel(model_in_path)
         assert model.is_initialized()
         model = model.get()
         model.addObjects(request_model.objects())
@@ -122,7 +130,7 @@ class TestReportingMeasureName:
         argument_map["report_drybulb_temp"] = report_drybulb_temp
 
         # temp set path so idf_output_requests work
-        runner.setLastOpenStudioModelPath(openstudio.toPath(str(MODEL_IN_PATH_DEFAULT)))
+        runner.setLastOpenStudioModelPath(MODEL_IN_PATH_DEFAULT)
 
         # get the energyplus output requests, this will be done automatically by OS App and PAT
         idf_output_requests = measure.energyPlusOutputRequests(runner, argument_map)
@@ -138,9 +146,9 @@ class TestReportingMeasureName:
         assert TestReportingMeasureName.sql_path(test_name).exists()
 
         # set up runner, this will happen automatically when measure is run in PAT or OpenStudio
-        runner.setLastOpenStudioModelPath(openstudio.toPath(str(model_out_path)))
-        runner.setLastEpwFilePath(openstudio.toPath(str(epw_path)))
-        runner.setLastEnergyPlusSqlFilePath(openstudio.toPath(str(TestReportingMeasureName.sql_path(test_name))))
+        runner.setLastOpenStudioModelPath(model_out_path)
+        runner.setLastEpwFilePath(epw_path)
+        runner.setLastEnergyPlusSqlFilePath(TestReportingMeasureName.sql_path(test_name))
 
         # delete the output if it exists
         report_path = TestReportingMeasureName.report_path(test_name)
@@ -151,18 +159,24 @@ class TestReportingMeasureName:
 
         # temporarily change directory to the run directory and run the measure
         start_dir = Path.cwd()
-        # try:
         os.chdir(TestReportingMeasureName.run_dir(test_name))
+        try:
+            # run the measure
+            measure.run(runner, argument_map)
+        finally:
+            os.chdir(start_dir)
 
-        # run the measure
-        measure.run(runner, argument_map)
         result = runner.result()
         print(result)
         assert result.value().valueName() == "Success"
-        assert len(result.warnings()) == 0
-        os.chdir(start_dir)
-        # except:
-        #    os.chdir(start_dir)
+        assert len(result.stepWarnings()) == 0
+
+        sqlFile = runner.lastEnergyPlusSqlFile().get()
+        if not sqlFile.connectionOpen():
+            sqlFile.reopen()
+        hours = sqlFile.hoursSimulated()
+        assert hours.is_initialized()
+        assert hours.get() == 8760.0
 
         # make sure the report file exists
         assert report_path.exists()
@@ -191,7 +205,7 @@ class TestReportingMeasureName:
         argument_map["report_drybulb_temp"] = report_drybulb_temp
 
         # temp set path so idf_output_requests work
-        runner.setLastOpenStudioModelPath(openstudio.toPath(str(MODEL_IN_PATH_DEFAULT)))
+        runner.setLastOpenStudioModelPath(MODEL_IN_PATH_DEFAULT)
 
         # get the energyplus output requests, this will be done automatically by OS App and PAT
         idf_output_requests = measure.energyPlusOutputRequests(runner, argument_map)
@@ -207,9 +221,9 @@ class TestReportingMeasureName:
         assert TestReportingMeasureName.sql_path(test_name).exists()
 
         # set up runner, this will happen automatically when measure is run in PAT or OpenStudio
-        runner.setLastOpenStudioModelPath(openstudio.toPath(str(model_out_path)))
-        runner.setLastEpwFilePath(openstudio.toPath(str(epw_path)))
-        runner.setLastEnergyPlusSqlFilePath(openstudio.toPath(str(TestReportingMeasureName.sql_path(test_name))))
+        runner.setLastOpenStudioModelPath(model_out_path)
+        runner.setLastEpwFilePath(epw_path)
+        runner.setLastEnergyPlusSqlFilePath(TestReportingMeasureName.sql_path(test_name))
 
         # delete the output if it exists
         report_path = TestReportingMeasureName.report_path(test_name)
@@ -220,18 +234,33 @@ class TestReportingMeasureName:
 
         # temporarily change directory to the run directory and run the measure
         start_dir = Path.cwd()
-        # try:
         os.chdir(TestReportingMeasureName.run_dir(test_name))
+        try:
+            # run the measure
+            measure.run(runner, argument_map)
+        finally:
+            os.chdir(start_dir)
 
-        # run the measure
-        measure.run(runner, argument_map)
         result = runner.result()
         print(result)
         assert result.value().valueName() == "Success"
-        assert len(result.warnings()) == 0
-        os.chdir(start_dir)
-        # except:
-        #    os.chdir(start_dir)
+        assert len(result.stepWarnings()) == 0
+
+        sqlFile = runner.lastEnergyPlusSqlFile().get()
+        if not sqlFile.connectionOpen():
+            sqlFile.reopen()
+        hours = sqlFile.hoursSimulated()
+        assert hours.is_initialized()
+        assert hours.get() == 8760.0
 
         # make sure the report file exists
         assert report_path.exists()
+
+
+# This allows running openstudio CLI on this file (`openstudio test_measure.py`, maybe with extra args)
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        pytest.main([__file__] + sys.argv[1:])
+    else:
+        pytest.main()

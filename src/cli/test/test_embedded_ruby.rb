@@ -90,6 +90,9 @@ class EmbeddedRuby_Test < Minitest::Test
     require 'json'
     my_hash = JSON.parse('{"hello": "goodbye"}')
     JSON.generate(my_hash)
+    assert_equal(JSON.parser, JSON::Ext::Parser)
+    assert_equal(JSON.generator, JSON::Ext::Generator)
+    assert_equal("2.6.3", JSON::VERSION)
   end
 
   def test_md5
@@ -134,18 +137,6 @@ class EmbeddedRuby_Test < Minitest::Test
   def test_rmd160
     require 'digest/rmd160'
     Digest::RMD160.hexdigest 'abc'
-    assert(true)
-  end
-
-  def test_sdbm
-    require 'sdbm'
-
-    SDBM.open 'my_database' do |db|
-      db['apple'] = 'fruit'
-      db['pear'] = 'fruit'
-      db['carrot'] = 'vegetable'
-      db['tomato'] = 'vegetable'
-    end
     assert(true)
   end
 
@@ -234,6 +225,7 @@ class EmbeddedRuby_Test < Minitest::Test
   end
 
   def test_json_schemer
+    skip("Disabled due to unf_ext, see https://github.com/NREL/openstudio-gems/issues/72")
     require 'json_schemer'
 
     schema = {

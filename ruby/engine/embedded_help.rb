@@ -63,12 +63,54 @@ module Kernel
   #if ENV['RUBYLIB']
   #  ENV['RUBYLIB'].split(File::PATH_SEPARATOR).each {|lib| $LOAD_PATH.unshift(lib)}
   #end
+
+  # ruby -e 'puts $LOAD_PATH', this comes from loadpath.c (ruby_initial_load_paths)
+  # <ruby_dir>/lib/ruby/site_ruby/3.2.0
+  # <ruby_dir>/lib/ruby/site_ruby/3.2.0/x86_64-linux
+  # <ruby_dir>/lib/ruby/site_ruby
+  # <ruby_dir>/lib/ruby/vendor_ruby/3.2.0
+  # <ruby_dir>/lib/ruby/vendor_ruby/3.2.0/x86_64-linux
+  # <ruby_dir>/lib/ruby/vendor_ruby
+  # <ruby_dir>/lib/ruby/3.2.0
+  # <ruby_dir>/lib/ruby/3.2.0/x86_64-linux
+
+  # Change 3.2.2 to 3.2.0
+  RUBY_V = (RUBY_VERSION.split('.')[0..1] + ['0']).join('.')
+  # Debug
+  # puts "Initial load path:
+  # puts $LOAD_PATH
+
+  # TODO: double check and update platform-specific includes
   $LOAD_PATH << ':'
-  $LOAD_PATH << ':/ruby/2.7.0'
-  $LOAD_PATH << ':/ruby/2.7.0/x86_64-darwin16'
-  $LOAD_PATH << ':/ruby/2.7.0/x86_64-darwin17'
-  $LOAD_PATH << ':/ruby/2.7.0/x86_64-darwin18'
-  $LOAD_PATH << ':/ruby/2.7.0/x64-mswin64_140'
+  $LOAD_PATH << ":/ruby/site_ruby/#{RUBY_V}"
+  $LOAD_PATH << ":/ruby/site_ruby/#{RUBY_V}/#{RUBY_PLATFORM}"
+  $LOAD_PATH << ":/ruby/site_ruby"
+  $LOAD_PATH << ":/ruby/vendor_ruby/#{RUBY_V}"
+  $LOAD_PATH << ":/ruby/vendor_ruby/#{RUBY_V}/#{RUBY_PLATFORM}"
+  $LOAD_PATH << ":/ruby/vendor_ruby"
+  $LOAD_PATH << ":/ruby/#{RUBY_V}"
+  $LOAD_PATH << ":/ruby/#{RUBY_V}/#{RUBY_PLATFORM}"
+
+  # puts "==============="
+  # puts "New load path:"
+  # puts $LOAD_PATH
+
+  # TODO: keep fallbacks?
+  # $LOAD_PATH << ':/ruby/3.2.0'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin16'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin17'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin18'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin19'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin20'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin21'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-darwin22'
+  # $LOAD_PATH << ':/ruby/3.2.0/arm64-darwin20'
+  # $LOAD_PATH << ':/ruby/3.2.0/arm64-darwin21'
+  # $LOAD_PATH << ':/ruby/3.2.0/arm64-darwin22'
+  # $LOAD_PATH << ':/ruby/3.2.0/arm64-darwin23'
+  # $LOAD_PATH << ':/ruby/3.2.0/x86_64-linux'
+  # $LOAD_PATH << ':/ruby/3.2.0/aarch64-linux'
+  # $LOAD_PATH << ':/ruby/3.2.0/x64-mswin64_140'
   # DLM: now done in embedded gem initialization section in openstudio_cli.rb
   #$LOAD_PATH << EmbeddedScripting::findFirstFileByName('openstudio-standards.rb').gsub('/openstudio-standards.rb', '')
   #$LOAD_PATH << EmbeddedScripting::findFirstFileByName('openstudio-workflow.rb').gsub('/openstudio-workflow.rb', '')
@@ -86,9 +128,10 @@ module Kernel
     'liboga' => 'init_liboga',\
     'sqlite3/sqlite3_native' => 'init_sqlite3_native',\
     'jaro_winkler_ext' => 'init_jaro_winkler_ext',\
-    'pycall.so' => 'init_pycall',\
-    'pycall.dll' => 'init_pycall',\
-    'msgpack/msgpack' => 'init_msgpack'
+    'msgpack/msgpack' => 'init_msgpack',\
+    'byebug/byebug' => 'init_byebug',\
+    'json/ext/parser' => 'init_parser',\
+    'json/ext/generator' => 'init_generator'
     #'cbor/cbor' => 'init_cbor',\
   }
 
@@ -223,11 +266,11 @@ module Kernel
     end
 
     result = ""
-    if File.exists?(absolute_path)
+    if File.exist?(absolute_path)
       File.open(absolute_path, mode) do |file|
         result = file.read
       end
-    elsif File.exists?(path)
+    elsif File.exist?(path)
       File.open(path, mode) do |file|
         result = file.read
       end
@@ -651,7 +694,7 @@ module FileUtils
     alias :original_cp :cp
   end
 
-  def self.cp_r(src, dest, options = {})
+  def self.cp_r(src, dest, ...)
     #puts "cp_r #{src} to #{dest}"
     if src.to_s.chars.first == ':' then
       absolute_path = OpenStudio.get_absolute_path(src)
@@ -692,10 +735,10 @@ module FileUtils
       end
     end
 
-    self.original_cp_r(src, dest, options)
+    self.original_cp_r(src, dest, ...)
   end
 
-  def self.cp(src, dest, options = {})
+  def self.cp(src, dest, ...)
     #puts "cp #{src} to #{dest}"
     if src.to_s.chars.first == ':' then
       absolute_path = OpenStudio.get_absolute_path(src)
@@ -720,11 +763,11 @@ module FileUtils
       end
     end
 
-    self.original_cp(src, dest, options)
+    self.original_cp(src, dest, ...)
   end
 
-  def self.copy(src, dest, options = {})
-    return self.cp(src, dest, options)
+  def self.copy(src, dest, ...)
+    return self.cp(src, dest, ...)
   end
 end
 
@@ -764,7 +807,7 @@ module Find
       ps = [path]
       while file = ps.shift
         catch(:prune) do
-          yield file.dup.taint
+          yield file.dup # .taint
           begin
             s = File.lstat(file)
           rescue Errno::ENOENT, Errno::EACCES, Errno::ENOTDIR, Errno::ELOOP, Errno::ENAMETOOLONG
@@ -782,7 +825,7 @@ module Find
             fs.reverse_each {|f|
               next if f == "." or f == ".."
               f = File.join(file, f)
-              ps.unshift f.untaint
+              ps.unshift f
             }
           end
         end

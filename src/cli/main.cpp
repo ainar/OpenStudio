@@ -104,11 +104,11 @@ int main(int argc, char* argv[]) {
       "--verbose",
       [](auto count) {
         if (count == 1) {
-          fmt::print("Setting Log Level to Debug ({})\n", LogLevel::Debug);
           openstudio::Logger::instance().standardOutLogger().setLogLevel(LogLevel::Debug);
+          LOG_FREE(Debug, "openstudio.CLI", "Setting Log Level to Debug (" << LogLevel::Debug << ")");
         } else if (count == 2) {
-          fmt::print("Setting Log Level to Trace ({})\n", LogLevel::Trace);
           openstudio::Logger::instance().standardOutLogger().setLogLevel(LogLevel::Trace);
+          LOG_FREE(Debug, "openstudio.CLI", "Setting Log Level to Trace (" << LogLevel::Trace << ")");
         }
       },
       "Print the full log to STDOUT - sets verbosity to Debug if given once and Trace if given twice.");
@@ -120,19 +120,18 @@ int main(int argc, char* argv[]) {
     };
     static constexpr std::array<std::string_view, 6> logLevelStrs = {"Trace", "Debug", "Info", "Warn", "Error", "Fatal"};
 
-    auto* const logLevelOpt =
-      app
-        .add_option_function<LogLevel>(
-          "-l,--loglevel",
-          [](const LogLevel& level) {
-            fmt::print("Setting Log Level to {} ({})\n", logLevelStrs[static_cast<size_t>(level) - static_cast<size_t>(LogLevel::Trace)],
-                       std::to_string(level));
-            openstudio::Logger::instance().standardOutLogger().setLogLevel(level);
-          },
-          "LogLevel settings: One of {Trace, Debug, Info, Warn, Error, Fatal} [Default: Warn] Excludes: --verbose")
-        ->excludes(verboseOpt)
-        ->option_text("LEVEL")
-        ->transform(CLI::CheckedTransformer(logLevelMap, CLI::ignore_case));
+    auto* const logLevelOpt = app
+                                .add_option_function<LogLevel>(
+                                  "-l,--loglevel",
+                                  [](const LogLevel& level) {
+                                    const auto loglLevelStr = logLevelStrs[static_cast<size_t>(level) - static_cast<size_t>(LogLevel::Trace)];
+                                    openstudio::Logger::instance().standardOutLogger().setLogLevel(level);
+                                    LOG_FREE(Debug, "openstudio.CLI", "Setting Log Level to " << loglLevelStr << " (" << level << ")");
+                                  },
+                                  "LogLevel settings: One of {Trace, Debug, Info, Warn, Error, Fatal} [Default: Warn] Excludes: --verbose")
+                                ->excludes(verboseOpt)
+                                ->option_text("LEVEL")
+                                ->transform(CLI::CheckedTransformer(logLevelMap, CLI::ignore_case));
 
     verboseOpt->excludes(logLevelOpt);
 
@@ -199,8 +198,6 @@ int main(int argc, char* argv[]) {
       rubyEngine->registerType<openstudio::measure::EnergyPlusMeasure*>("openstudio::measure::EnergyPlusMeasure *");
       rubyEngine->registerType<openstudio::measure::ReportingMeasure*>("openstudio::measure::ReportingMeasure *");
       rubyEngine->registerType<openstudio::measure::MeasureInfoBinding*>("openstudio::measure::MeasureInfoBinding *");
-      // rubyEngine->registerType<std::string>("std::string");
-      // rubyEngine->registerType<std::string*>("std::string *");
       rubyEngine->exec("OpenStudio::init_rest_of_openstudio()");
     };
     rubyEngine.registerInitializationFunction(runSetupEmbeddedGems);
@@ -229,7 +226,6 @@ int main(int argc, char* argv[]) {
       pythonEngine->registerType<openstudio::measure::ModelMeasure*>("openstudio::measure::ModelMeasure *");
       pythonEngine->registerType<openstudio::measure::EnergyPlusMeasure*>("openstudio::measure::EnergyPlusMeasure *");
       pythonEngine->registerType<openstudio::measure::ReportingMeasure*>("openstudio::measure::ReportingMeasure *");
-      // pythonEngine->registerType<std::string*>("std::string *");
     };
     pythonEngine.registerInitializationFunction(runSetupPythonPath);
 
@@ -263,6 +259,16 @@ int main(int argc, char* argv[]) {
     execute_python_scriptCommand->callback([&pythonScriptPath, &pythonEngine, &python_fwd_args] {
       openstudio::cli::executePythonScriptCommand(pythonScriptPath, pythonEngine, python_fwd_args);
     });
+    // }
+
+    // {
+    auto* ruby_repl_command = app.add_subcommand("interactive_ruby", "Executes a ruby REPL");
+    ruby_repl_command->callback([&rubyEngine] { openstudio::cli::executeRubyRepl(rubyEngine); });
+    // }
+
+    // {
+    auto* python_repl_command = app.add_subcommand("interactive_python", "Executes a python REPL");
+    python_repl_command->callback([&pythonEngine] { openstudio::cli::executePythonRepl(pythonEngine); });
     // }
 
     [[maybe_unused]] auto* gem_listCommand = app.add_subcommand("gem_list", "Lists the set gems available to openstudio")->callback([&rubyEngine]() {

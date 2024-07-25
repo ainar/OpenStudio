@@ -37,7 +37,7 @@ target_link_libraries(openstudio
   PRIVATE
   openstudiolib
   openstudio_workflow
-  CONAN_PKG::cli11
+  CLI11::CLI11
 )
 
 if(BUILD_RUBY_BINDINGS)
@@ -283,10 +283,17 @@ if(BUILD_TESTING)
       WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/resources/workflow/outdated_measures/"
     )
 
-  add_test(NAME OpenStudioCLI.test_output_files
+    add_test(NAME OpenStudioCLI.test_output_files
       COMMAND ${Python_EXECUTABLE} -m pytest --verbose --os-cli-path $<TARGET_FILE:openstudio> "${CMAKE_CURRENT_SOURCE_DIR}/test/test_output_files.py"
       WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/resources/workflow/output_test/"
     )
+
+    file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/Testing/")
+    add_test(NAME OpenStudioCLI.test_bcl_measure_templates
+      COMMAND ${Python_EXECUTABLE} -m pytest --verbose --os-cli-path $<TARGET_FILE:openstudio> "${CMAKE_CURRENT_SOURCE_DIR}/test/test_bcl_measure_templates.py"
+      WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/Testing/"
+    )
+
 
   else()
     # TODO: Remove. Fallback on these for now, as I don't know if CI has pytest installed
@@ -469,6 +476,17 @@ if(BUILD_TESTING)
     message(AUTHOR_WARNING "Cannot run the python numpy test, as numpy isn't installed on your system python")
   endif()
 
+  if (Python_EXECUTABLE)
+    add_test(NAME OpenStudioCLI.minitest_fail
+      COMMAND ${Python_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test/run_minitest_fail.py" $<TARGET_FILE:openstudio>
+    )
+    if (SYSTEM_RUBY_EXECUTABLE)
+      add_test(NAME RubyTest.minitest_fail
+        COMMAND ${Python_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/test/run_minitest_fail.py" "${SYSTEM_RUBY_EXECUTABLE}"
+      )
+    endif()
+  endif()
+
   file(GLOB RUBY_TEST_SRC
     # find all CLI test
     "test/test*.rb"
@@ -491,13 +509,16 @@ if(BUILD_TESTING)
       string(REGEX MATCH "/?([A-Za-z_0-9 ]+)\\.rb" FILE_NAME ${f})
       string(REGEX REPLACE "/?([A-Za-z_0-9 ]+)\\.rb" "\\1" FILE_NAME ${FILE_NAME})
 
+      set(CTEST_NAME "CLITest-${FILE_NAME}-${TEST_NAME}")
 
-          add_test(NAME "CLITest-${FILE_NAME}-${TEST_NAME}"
-            COMMAND "${CMAKE_COMMAND}" -E chdir "${CMAKE_CURRENT_BINARY_DIR}"
-            "$<TARGET_FILE:openstudio>" "${f}" "--name=test_${TEST_NAME}"
-          )
+      add_test(NAME "${CTEST_NAME}"
+        COMMAND "${CMAKE_COMMAND}" -E chdir "${CMAKE_CURRENT_BINARY_DIR}"
+        "$<TARGET_FILE:openstudio>" "${f}" "--name=test_${TEST_NAME}"
+        )
 
-        set_tests_properties("CLITest-${FILE_NAME}-${TEST_NAME}" PROPERTIES TIMEOUT 660 )
+      set_tests_properties("${CTEST_NAME}" PROPERTIES TIMEOUT 660 )
     endforeach()
+
   endforeach()
+
 endif()
