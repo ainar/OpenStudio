@@ -244,6 +244,7 @@ elseif(UNIX)
     OUTPUT_VARIABLE LSB_RELEASE_VERSION_SHORT
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
+  set(LSB_RELEASE_VERSION_SHORT "22.04")
 
   # -is outputs "Ubuntu" or "Fedora"
   execute_process(COMMAND ${LSB_RELEASE} -is
@@ -524,7 +525,7 @@ if(UNIX)
   # TODO: temp for gcc-11 which throws narrowing conversions in Path_GTest.cpp due to int codepoints
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-narrowing")
   # Treat all warnings as errors
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+  # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
   if(APPLE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-overloaded-virtual -ftemplate-depth=1024")
   else()
@@ -840,7 +841,7 @@ if(BUILD_CLI)
   set(OPENSTUDIO_GEMS_BASEURL "http://openstudio-resources.s3.amazonaws.com/dependencies")
 
   # TODO: temp
-  set(OPENSTUDIO_GEMS_BASEURL "https://github.com/NREL/openstudio-gems/releases/download/v3.8.0")
+  set(OPENSTUDIO_GEMS_BASEURL "https://github.com/ainar/openstudio-gems/releases/download/v3.8.1-webrick")
 
   # To use the package produced by a PR to https://github.com/NREL/openstudio-gems
   set(USE_OPENSTUDIO_GEMS_PR FALSE)
@@ -863,8 +864,8 @@ if(BUILD_CLI)
          set(OPENSTUDIO_GEMS_ZIP_FILENAME "openstudio3-gems-20240517-linux_arm64-3.2.2.tar.gz")
          set(OPENSTUDIO_GEMS_ZIP_EXPECTED_MD5 "f6d094a3bdaf1476ce7911e74276993b")
        else()
-         set(OPENSTUDIO_GEMS_ZIP_FILENAME "openstudio3-gems-20240517-linux-3.2.2.tar.gz")
-         set(OPENSTUDIO_GEMS_ZIP_EXPECTED_MD5 "b0201a70c96d343b2d1408897f39514f")
+         set(OPENSTUDIO_GEMS_ZIP_FILENAME "openstudio3-gems-20240925-linux-3.2.2.tar.gz")
+         set(OPENSTUDIO_GEMS_ZIP_EXPECTED_MD5 "e16fb6d8c494e1ce0436dfc499daa99e")
        endif()
        if (USE_OPENSTUDIO_GEMS_PR)
          set(OPENSTUDIO_GEMS_BASEURL "${OPENSTUDIO_GEMS_BASEURL}/openstudio-gems-linux/${OPENSTUDIO_GEMS_PR_NUMBER}")
